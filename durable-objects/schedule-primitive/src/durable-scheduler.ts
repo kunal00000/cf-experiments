@@ -211,11 +211,18 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 				| ScheduledCallback<unknown>
 				| undefined;
 
-			try {
-				if (!callback) {
-					throw new Error(`Unknown callback: ${job.callback}`);
-				}
+			if (!callback) {
+				this.#ctx.storage.sql.exec(
+					`UPDATE schedules
+					 SET status = 'dead', last_error = ?
+					 WHERE id = ?`,
+					`Unknown callback: ${job.callback}`,
+					job.id,
+				);
+				continue;
+			}
 
+			try {
 				await callback(job.payload === null ? undefined : JSON.parse(job.payload), {
 					scheduleId: job.id,
 					scheduledFor: job.scheduled_for,

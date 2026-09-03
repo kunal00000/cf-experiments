@@ -91,7 +91,7 @@ await alarm.scheduleAfter(5_000, "deliverWebhook", {
 });
 ```
 
-The compiler checks callback names and the payload supplied for each name. The persisted string remains a deployment compatibility contract: renaming or removing a callback while its rows exist makes those rows fail and eventually become dead.
+The compiler checks callback names and the payload supplied for each name. The persisted string remains a deployment compatibility contract: renaming or removing a callback while its rows exist marks those rows dead the next time they become due. Missing callbacks are not retried because a registry mismatch cannot resolve without a deployment.
 
 The payload parameter is currently optional at the scheduler API boundary. Omitting it stores SQL `NULL` and delivers `undefined`, even when a callback's declared payload type is non-optional. That is a known gap in the current type surface.
 
@@ -106,6 +106,8 @@ The API has no timezone parameter. Cron evaluation follows the Worker's runtime 
 ### Explicit retry state
 
 Callback failures are application failures, so the scheduler catches them and persists the next attempt instead of relying on the platform alarm retry budget.
+
+A missing callback is handled separately from a callback failure. The scheduler marks the row dead immediately, records `Unknown callback: <name>`, and leaves `attempts` unchanged because the callback was never invoked.
 
 The current row state provides:
 
@@ -339,6 +341,7 @@ async function chargeAccount(
 | Event | Persisted result |
 | --- | --- |
 | New schedule | `pending`, `attempts = 0`, `scheduledFor = runAt` |
+| Callback key is missing | Row retained as `dead`; attempts unchanged |
 | Callback succeeds for a one-shot | Row deleted |
 | Callback succeeds for cron | Next occurrence stored; attempts and error reset |
 | Callback fails below the limit | Same occurrence retained; `runAt` moved to retry time |
