@@ -1,0 +1,24 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "what-happens-when-alarm-schedule-coincides-with-running-alarm",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-03",
+	"migrations": [
+		{
+			"new_sqlite_classes": ["NativeAlarm"],
+			"tag": "v1"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "NativeAlarm",
+				"name": "NATIVE_ALARM"
+			}
+		]
+	},
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true
+}
