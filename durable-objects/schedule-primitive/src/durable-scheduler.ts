@@ -21,7 +21,7 @@ export type CallbackPayload<Callback> = Callback extends (
 	? Payload
 	: never;
 
-export type ScheduleType = "once" | "interval" | "cron";
+export type ScheduleType = "once" | "cron";
 export type ScheduleStatus = "pending" | "dead";
 
 export type Schedule<Payload = unknown> = {
@@ -31,7 +31,6 @@ export type Schedule<Payload = unknown> = {
 	type: ScheduleType;
 	scheduledFor: number;
 	runAt: number;
-	intervalMs?: number;
 	cron?: string;
 	attempts: number;
 	maxAttempts: number;
@@ -57,7 +56,6 @@ type ScheduleRow = {
 	kind: ScheduleType;
 	scheduled_for: number;
 	run_at: number;
-	interval_ms: number | null;
 	cron: string | null;
 	attempts: number;
 	max_attempts: number;
@@ -65,14 +63,9 @@ type ScheduleRow = {
 	last_error: string | null;
 };
 
-type Recurrence = {
-	intervalMs?: number;
-	cron?: string;
-};
-
 const SCHEDULE_COLUMNS = `
 	id, callback, payload, kind, scheduled_for, run_at,
-	interval_ms, cron, attempts, max_attempts, status, last_error
+	cron, attempts, max_attempts, status, last_error
 `;
 
 export function nextCronTimeMs(expression: string, nowMs: number): number {
@@ -91,10 +84,9 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 				id TEXT PRIMARY KEY,
 				callback TEXT NOT NULL,
 				payload TEXT,
-				kind TEXT NOT NULL CHECK(kind IN ('once', 'interval', 'cron')),
+				kind TEXT NOT NULL CHECK(kind IN ('once', 'cron')),
 				scheduled_for INTEGER NOT NULL,
 				run_at INTEGER NOT NULL,
-				interval_ms INTEGER,
 				cron TEXT,
 				attempts INTEGER NOT NULL DEFAULT 0,
 				max_attempts INTEGER NOT NULL DEFAULT 3,
@@ -107,7 +99,7 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 		`);
 	}
 
-	after<Name extends keyof Callbacks & string>(
+	scheduleAfter<Name extends keyof Callbacks & string>(
 		delayMs: number,
 		callback: Name,
 		payload?: CallbackPayload<Callbacks[Name]>,
@@ -119,7 +111,7 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 		return this.#insert("once", Date.now() + delayMs, callback, payload);
 	}
 
-	at<Name extends keyof Callbacks & string>(
+	scheduleAt<Name extends keyof Callbacks & string>(
 		date: Date,
 		callback: Name,
 		payload?: CallbackPayload<Callbacks[Name]>,
@@ -133,28 +125,12 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 		return this.#insert("once", runAt, callback, payload);
 	}
 
-	every<Name extends keyof Callbacks & string>(
-		intervalMs: number,
-		callback: Name,
-		payload?: CallbackPayload<Callbacks[Name]>,
-	): Promise<Schedule<CallbackPayload<Callbacks[Name]>>> {
-		if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-			throw new RangeError("intervalMs must be a positive finite number");
-		}
-
-		return this.#insert("interval", Date.now() + intervalMs, callback, payload, {
-			intervalMs,
-		});
-	}
-
-	cron<Name extends keyof Callbacks & string>(
+	scheduleCron<Name extends keyof Callbacks & string>(
 		expression: string,
 		callback: Name,
 		payload?: CallbackPayload<Callbacks[Name]>,
 	): Promise<Schedule<CallbackPayload<Callbacks[Name]>>> {
-		return this.#insert("cron", nextCronTimeMs(expression, Date.now()), callback, payload, {
-			cron: expression,
-		});
+		return this.#insert("cron", nextCronTimeMs(expression, Date.now()), callback, payload, expression);
 	}
 
 	get(id: string): Schedule | undefined {
@@ -218,7 +194,7 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 		return result.rowsWritten > 0;
 	}
 
-	async alarm(): Promise<void> {
+	async handler(): Promise<void> {
 		const due = this.#ctx.storage.sql
 			.exec<ScheduleRow>(
 				`SELECT ${SCHEDULE_COLUMNS}
@@ -261,7 +237,7 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 		runAt: number,
 		callback: string,
 		payload: Payload | undefined,
-		recurrence: Recurrence = {},
+		cron?: string,
 	): Promise<Schedule<Payload>> {
 		if (typeof this.#callbacks[callback as keyof Callbacks] !== "function") {
 			throw new Error(`Unknown scheduled callback: ${callback}`);
@@ -279,8 +255,22 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 			serializedPayload = serialized;
 		}
 
-		if (kind !== "once") {
-			const existing = this.#findRecurring(kind, callback, serializedPayload, recurrence);
+		if (kind === "cron") {
+			const existing = this.#ctx.storage.sql
+				.exec<ScheduleRow>(
+					`SELECT ${SCHEDULE_COLUMNS}
+					 FROM schedules
+					 WHERE status = 'pending'
+					   AND kind = 'cron'
+					   AND callback = ?
+					   AND payload IS ?
+					   AND cron = ?
+					 LIMIT 1`,
+					callback,
+					serializedPayload,
+					cron ?? null,
+				)
+				.toArray()[0];
 
 			if (existing) {
 				await this.#rearm();
@@ -293,47 +283,19 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 		this.#ctx.storage.sql.exec(
 			`INSERT INTO schedules (
 				id, callback, payload, kind, scheduled_for, run_at,
-				interval_ms, cron
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				cron
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			id,
 			callback,
 			serializedPayload,
 			kind,
 			runAt,
 			runAt,
-			recurrence.intervalMs ?? null,
-			recurrence.cron ?? null,
+			cron ?? null,
 		);
 
 		await this.#rearm();
 		return this.get(id) as Schedule<Payload>;
-	}
-
-	#findRecurring(
-		kind: Exclude<ScheduleType, "once">,
-		callback: string,
-		payload: string | null,
-		recurrence: Recurrence,
-	): ScheduleRow | undefined {
-		const recurrenceColumn = kind === "interval" ? "interval_ms" : "cron";
-		const recurrenceValue = kind === "interval" ? recurrence.intervalMs : recurrence.cron;
-
-		return this.#ctx.storage.sql
-			.exec<ScheduleRow>(
-				`SELECT ${SCHEDULE_COLUMNS}
-				 FROM schedules
-				 WHERE status = 'pending'
-				   AND kind = ?
-				   AND callback = ?
-				   AND payload IS ?
-				   AND ${recurrenceColumn} = ?
-				 LIMIT 1`,
-				kind,
-				callback,
-				payload,
-				recurrenceValue ?? null,
-			)
-			.toArray()[0];
 	}
 
 	#complete(job: ScheduleRow): void {
@@ -342,10 +304,7 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 			return;
 		}
 
-		const next =
-			job.kind === "interval"
-				? Date.now() + job.interval_ms!
-				: nextCronTimeMs(job.cron!, Date.now());
+		const next = nextCronTimeMs(job.cron!, Date.now());
 
 		this.#ctx.storage.sql.exec(
 			`UPDATE schedules
@@ -394,7 +353,6 @@ export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCa
 			type: row.kind,
 			scheduledFor: row.scheduled_for,
 			runAt: row.run_at,
-			...(row.interval_ms === null ? {} : { intervalMs: row.interval_ms }),
 			...(row.cron === null ? {} : { cron: row.cron }),
 			attempts: row.attempts,
 			maxAttempts: row.max_attempts,
