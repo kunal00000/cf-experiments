@@ -60,21 +60,6 @@ The idempotency key is `<schedule id>:<scheduledFor>`, so retries of one occurre
 
 Delivery is at least once. A callback's external effect and the following SQLite mutation cannot be committed atomically, so callbacks crossing a system boundary should propagate `context.idempotencyKey`.
 
-### Callback identity is persisted data
-
-Each row stores a callback key and JSON payload. At execution, the key is resolved against the current callback registry.
-
-| Change between deployments | Existing schedule behavior |
-| --- | --- |
-| Callback implementation changes, key stays stable | Uses the new implementation |
-| JavaScript function name changes, registry key stays stable | No effect |
-| Registry key is renamed or removed | Becomes `dead` when due; no retry or attempt increment |
-| Expected payload shape changes | Old JSON is passed unchanged to the new callback |
-
-The registry provides compile-time checking for new schedules; persisted payloads have no runtime schema migration. Cron deduplication compares the callback key, cron expression, and exact `JSON.stringify()` output. A dead cron row does not prevent creating a replacement.
-
-Payloads follow JSON semantics: dates become strings, object properties containing `undefined` disappear, and `BigInt` or circular values cannot be scheduled. SQL `NULL` represents an omitted payload; explicit `null` is stored as JSON.
-
 ### Execution and failures
 
 One handler pass selects up to 50 rows that are due at query time and processes them sequentially in ascending `runAt` order. A slow callback delays later rows in that batch. Rows that become due during the pass are picked up after the alarm is rearmed.
