@@ -107,15 +107,3 @@ alarm(): Promise<void> {
 	return this.#alarm.handler();
 }
 ```
-
-## HTTP harness
-
-The outer Worker routes every request to `MY_DURABLE_OBJECT.getByName("test")`; the Durable Object owns the request switch.
-
-```sh
-curl -sS http://localhost:8787 \
-  -H 'content-type: application/json' \
-  -d '{"action":"scheduleAfter","delayMs":1000,"payload":{"message":"hello"}}' | jq
-```
-
-Supported actions are `scheduleAfter`, `scheduleAt`, `scheduleCron`, `get`, `list`, and `cancel`. The HTTP body is type-asserted rather than runtime-validated.
