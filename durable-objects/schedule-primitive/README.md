@@ -1,4 +1,4 @@
-# Durable Scheduler
+# Scheduler
 
 A scheduling primitive built on a SQLite-backed Cloudflare Durable Object. It multiplexes logical schedules onto the single native alarm available to each Durable Object.
 
@@ -79,7 +79,7 @@ Cron expressions use the Worker runtime's UTC clock. Five-field expressions have
 ## API and use cases
 
 ```ts
-const alarm = new DurableScheduler(ctx, callbacks);
+const alarm = new Scheduler(ctx, callbacks);
 
 await alarm.scheduleAfter(15 * 60_000, "expireCheckout", { checkoutId });
 await alarm.scheduleAt(auction.closesAt, "closeAuction", { auctionId });

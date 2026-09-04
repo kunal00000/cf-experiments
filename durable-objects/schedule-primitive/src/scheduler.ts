@@ -72,7 +72,7 @@ export function nextCronTimeMs(expression: string, nowMs: number): number {
 	return parseCronExpression(expression).getNextDate(new Date(nowMs)).getTime();
 }
 
-export class DurableScheduler<Callbacks extends SchedulerCallbacks = SchedulerCallbacks> {
+export class Scheduler<Callbacks extends SchedulerCallbacks = SchedulerCallbacks> {
 	readonly #ctx: DurableObjectState;
 	readonly #callbacks: Readonly<Callbacks>;
 

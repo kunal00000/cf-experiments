@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { DurableScheduler, type ScheduleContext, type ScheduleCriteria } from "./durable-scheduler";
+import { Scheduler, type ScheduleContext, type ScheduleCriteria } from "./scheduler";
 
 type LogPayload = {
 	message: string;
@@ -20,11 +20,11 @@ const callbacks = {
 };
 
 export class MyDurableObject extends DurableObject<Env> {
-	readonly #alarm: DurableScheduler<typeof callbacks>;
+	readonly #alarm: Scheduler<typeof callbacks>;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		this.#alarm = new DurableScheduler(ctx, callbacks);
+		this.#alarm = new Scheduler(ctx, callbacks);
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -36,17 +36,11 @@ export class MyDurableObject extends DurableObject<Env> {
 
 		switch (input.action) {
 			case "scheduleAfter":
-				return Response.json(
-					await this.#alarm.scheduleAfter(input.delayMs, "log", input.payload),
-				);
+				return Response.json(await this.#alarm.scheduleAfter(input.delayMs, "log", input.payload));
 			case "scheduleAt":
-				return Response.json(
-					await this.#alarm.scheduleAt(new Date(input.timestamp), "log", input.payload),
-				);
+				return Response.json(await this.#alarm.scheduleAt(new Date(input.timestamp), "log", input.payload));
 			case "scheduleCron":
-				return Response.json(
-					await this.#alarm.scheduleCron(input.expression, "log", input.payload),
-				);
+				return Response.json(await this.#alarm.scheduleCron(input.expression, "log", input.payload));
 			case "get": {
 				const schedule = this.#alarm.get(input.id);
 				return schedule ? Response.json(schedule) : new Response(null, { status: 404 });
